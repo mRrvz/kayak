@@ -207,6 +207,8 @@ function step_fixup {
     echo " --- allowing empty passwords"
     sed -i 's,PASSREQ=YES,PASSREQ=NO,' $ROOTDIR/etc/default/login
 
+    apply_custom_overlay
+
     chkpt smf
 }
 
@@ -274,6 +276,7 @@ function step_smf {
 function step_cull {
     if [ -z "$BIGROOT" ]; then
         load_keep_list $DATADIR/keep.*
+        add_overlay_to_keep_list
 
         typeset tf=`mktemp`
         typeset -i cnt=0
@@ -388,6 +391,45 @@ function step_mount {
     mount -o nologging $LOFIDEV $WORKDIR/mnt || fail "mount"
 
     chkpt copy
+}
+
+function add_overlay_to_keep_list() {
+    [ -z "$CUSTOM_OVERLAY" ] && return 0
+    [ ! -d "$CUSTOM_OVERLAY" ] && return 0
+
+    typeset -i cnt=0
+    while IFS= read -r file; do
+	rel=$(echo "$file" | sed "s|^$CUSTOM_OVERLAY/||")
+        keep_list+=([$rel]="x")
+        ((cnt++))
+    done < <(find "$CUSTOM_OVERLAY" -type f)
+
+    echo " --- keeping $cnt file(s) from overlay ${CUSTOM_OVERLAY}"
+}
+
+function apply_custom_overlay {
+    [ -z "$CUSTOM_OVERLAY" ] && return 0
+    [ ! -d "$CUSTOM_OVERLAY" ] && return 0
+
+    echo " --- applying custom overlay from $CUSTOM_OVERLAY"
+
+    typeset -i file_count=0
+    typeset -i dir_count=0
+
+    if [ -d "$CUSTOM_OVERLAY" ]; then
+        file_count=$(cd "$CUSTOM_OVERLAY" && find . -type f | wc -l)
+        dir_count=$(cd "$CUSTOM_OVERLAY" && find . -type d | wc -l)
+
+        (cd "$CUSTOM_OVERLAY" && tar cf - .) | \
+            (cd "$ROOTDIR" && tar xf -)
+
+        if [ $? -eq 0 ]; then
+            echo "     Applied $file_count file(s) from $dir_count directories"
+        else
+            echo "     WARNING: Failed to apply overlay completely"
+            return 1
+        fi
+    fi
 }
 
 function step_copy {
